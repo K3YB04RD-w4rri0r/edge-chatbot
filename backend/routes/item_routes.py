@@ -2,8 +2,8 @@ from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
 from datetime import datetime
 
-from schemas.item_schemas import Item, ItemCreate, ItemUpdate  
-from db import items_db, current_id   
+from backend.schemas.item_schemas import Item, ItemCreate, ItemUpdate  
+from backend.database import items_db, current_id   
 
 router = APIRouter()
 

@@ -1,0 +1,99 @@
+backend/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI app initialization
+│   ├── config.py               # Configuration settings
+│   │
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── v1/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py         # Authentication utls
+│   │   │   ├── chat.py         # Chat utls
+│   │   │   ├── conversations.py # Conversation management
+│   │   │   ├── documents.py    # Document management
+│   │   │   ├── processing.py   # SSE processing status
+│   │   │   ├── usage.py        # Usage and analytics
+│   │   │   └── health.py       # Health checks
+│   │   │
+│   │   └── dependencies.py     # Shared dependencies (auth, etc.)
+│   │
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── security.py         # Security utilities
+│   │   ├── rate_limiter.py     # Rate limiting logic
+│   │   ├── exceptions.py       # Custom exceptions
+│   │   └── middleware.py       # Custom middleware
+│   │
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── auth.py             # Auth-related models
+│   │   ├── chat.py             # Chat models
+│   │   ├── conversation.py     # Conversation models
+│   │   ├── document.py         # Document models
+│   │   └── usage.py            # Usage tracking models
+│   │
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── auth.py             # Pydantic schemas for auth
+│   │   ├── chat.py             # Pydantic schemas for chat
+│   │   ├── conversation.py     # Pydantic schemas for conversations
+│   │   ├── document.py         # Pydantic schemas for documents
+│   │   └── usage.py            # Pydantic schemas for usage
+│   │
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── auth_service.py     # Authentication logic
+│   │   ├── openai_service.py   # OpenAI API integration
+│   │   ├── vector_service.py   # Chroma vector DB operations
+│   │   ├── document_service.py # PDF processing with LangChain
+│   │   ├── rag_service.py      # RAG implementation
+│   │   ├── token_service.py    # Token counting with tiktoken
+│   │   └── storage_service.py  # File storage operations
+│   │
+│   ├── db/
+│   │   ├── __init__.py
+│   │   ├── base.py             # SQLAlchemy base
+│   │   ├── session.py          # Database session management
+│   │   └── repositories/       # Repository pattern
+│   │       ├── __init__.py
+│   │       ├── conversation_repo.py
+│   │       ├── message_repo.py
+│   │       └── document_repo.py
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── logging.py          # Logging configuration
+│       ├── validators.py       # Input validators
+│       └── helpers.py          # Helper functions
+│
+├── migrations/                 # Database migrations (Alembic)
+│   └── versions/
+│
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py            # Pytest fixtures
+│   ├── test_auth.py
+│   ├── test_chat.py
+│   ├── test_documents.py
+│   └── test_rag.py
+│
+├── scripts/
+│   ├── init_db.py             # Initialize database
+│   └── seed_data.py           # Seed test data
+│
+├── .env.example               # Environment variables example
+├── requirements.txt           # Python dependencies
+├── Dockerfile                # Docker configuration
+├── docker-compose.yml        # Docker compose for local dev
+└── README.md                 # Project documentation
+
+# Additional files for production
+├── terraform/                # Infrastructure as code
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+│
+└── .github/
+    └── workflows/
+        └── deploy.yml        # CI/CD pipeline

@@ -7,10 +7,9 @@ import uvicorn
 
 from config import settings, validate_config
 
-
-from api.items import router as items_router
-from schemas.item_schemas import Item, ItemCreate, ItemUpdate, ItemBase
-from db import items_db, current_id
+# routes 
+from backend.routes.item_routes import router as items_router
+from backend.routes.auth_routes import router as auth_router
 
 # Validate configuration on startup
 validate_config()
@@ -25,8 +24,10 @@ app = FastAPI(
     redoc_url=settings.redoc_url,
     debug=settings.debug
 )
-app.include_router(items_router)
 
+# router setup
+app.include_router(items_router)
+app.include_router(auth_router)
 
 # Configure CORS with settings
 app.add_middleware(

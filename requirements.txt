@@ -1,0 +1,5 @@
+# Tested in Python 3.13.2
+fastapi==0.116.1
+pydantic==2.11.7
+uvicorn==0.35.0
+requests==2.32.4

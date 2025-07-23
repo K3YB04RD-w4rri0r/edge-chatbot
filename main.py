@@ -12,16 +12,15 @@ from config import settings, validate_config
 # routes 
 from backend.routes.item_routes import router as items_router
 from backend.routes.auth_routes import router as auth_router
+from backend.routes.other_routes import router as other_router
 
 # Validate configuration on startup
 validate_config()
 
-# Create tables before creating the app
-print("Creating database tables...")
+# User Tables
 Base.metadata.create_all(bind=engine)
-print("Database tables created!")
 
-# Create FastAPI instance
+# Creates the FastAPI instance
 app = FastAPI(
     title=settings.app_name,
     description="Internal tool Edge",
@@ -35,6 +34,7 @@ app = FastAPI(
 # router setup
 app.include_router(items_router)
 app.include_router(auth_router)
+app.include_router(other_router)
 
 # Configure CORS with settings
 app.add_middleware(

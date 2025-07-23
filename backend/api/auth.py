@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 # local imports from main
 from backend.models.auth_models import User
 from backend.database import get_db  # Sql db
+
 from config import settings  
 
 
-# Use settings from config.py
+# Settings from config.py
 SECRET_KEY = settings.secret_key
 ALGORITHM = settings.algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes

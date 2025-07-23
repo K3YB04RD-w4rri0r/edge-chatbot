@@ -38,12 +38,41 @@ class Settings(BaseSettings):
     workers: int = Field(default=1, env="WORKERS")
     reload: bool = Field(default=False, env="RELOAD")
     
-    # Security Settings
+    # Security Settings (updated for Microsoft Auth)
     secret_key: str = Field(default_factory=lambda: secrets.token_urlsafe(32), env="SECRET_KEY")
-    access_token_expire_minutes: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
-    refresh_token_expire_days: int = Field(default=7, env="REFRESH_TOKEN_EXPIRE_DAYS")
     algorithm: str = Field(default="HS256", env="ALGORITHM")
-    bcrypt_rounds: int = Field(default=12, env="BCRYPT_ROUNDS")
+    
+    # Microsoft OAuth Settings
+    microsoft_tenant_id: str = Field(..., env="MICROSOFT_TENANT_ID")  # Required
+    microsoft_client_id: str = Field(..., env="MICROSOFT_CLIENT_ID")  # Required
+    microsoft_client_secret: str = Field(..., env="MICROSOFT_CLIENT_SECRET")  # Required
+    
+    # OAuth URLs (usually don't need to change these)
+    microsoft_authority: Optional[str] = Field(default=None, env="MICROSOFT_AUTHORITY")
+    microsoft_redirect_path: str = Field(
+        default="/auth/microsoft/callback",
+        env="MICROSOFT_REDIRECT_PATH"
+    )
+    
+    # Microsoft Graph Permissions
+    microsoft_scopes: List[str] = Field(
+        default=["User.Read", "profile", "email", "openid"],
+        env="MICROSOFT_SCOPES"
+    )
+    
+    # Application URLs
+    frontend_url: str = Field(default="http://localhost:3000", env="FRONTEND_URL")
+    backend_url: str = Field(default="http://localhost:8000", env="BACKEND_URL")
+    
+    # Session Settings (replacing JWT settings)
+    session_lifetime_hours: int = Field(default=24, env="SESSION_LIFETIME_HOURS")
+    session_absolute_timeout_days: int = Field(default=30, env="SESSION_ABSOLUTE_TIMEOUT_DAYS")
+    session_idle_timeout_hours: int = Field(default=8, env="SESSION_IDLE_TIMEOUT_HOURS")
+    max_sessions_per_user: int = Field(default=5, env="MAX_SESSIONS_PER_USER")
+    session_secret_key: str = Field(
+        default_factory=lambda: secrets.token_urlsafe(32), 
+        env="SESSION_SECRET_KEY"
+    )
     
     # CORS Settings
     cors_origins: List[str] = Field(
@@ -76,7 +105,7 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = Field(default=None, env="SMTP_PASSWORD")
     smtp_tls: bool = Field(default=True, env="SMTP_TLS")
     email_from: str = Field(default="noreply@example.com", env="EMAIL_FROM")
-    email_from_name: str = Field(default="My App", env="EMAIL_FROM_NAME")
+    email_from_name: str = Field(default="Internal Edge Tool", env="EMAIL_FROM_NAME")
     
     # AWS Settings (if using AWS services)
     aws_access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID")
@@ -111,9 +140,9 @@ class Settings(BaseSettings):
     upload_directory: str = Field(default="./uploads", env="UPLOAD_DIRECTORY")
     
     # Feature Flags
-    enable_registration: bool = Field(default=True, env="ENABLE_REGISTRATION")
-    enable_oauth: bool = Field(default=False, env="ENABLE_OAUTH")
-    enable_2fa: bool = Field(default=False, env="ENABLE_2FA")
+    enable_registration: bool = Field(default=False, env="ENABLE_REGISTRATION")  # Not needed with Microsoft Auth
+    enable_oauth: bool = Field(default=True, env="ENABLE_OAUTH")  # Always true with Microsoft Auth
+    enable_2fa: bool = Field(default=False, env="ENABLE_2FA")  # Microsoft handles this
     maintenance_mode: bool = Field(default=False, env="MAINTENANCE_MODE")
     
     # Pagination
@@ -131,14 +160,57 @@ class Settings(BaseSettings):
         extra="ignore"
     )
     
-    @field_validator("cors_origins", mode = "before")
+    # Microsoft Auth Properties
+    @property
+    def microsoft_authority_url(self) -> str:
+        """Get the Microsoft authority URL"""
+        if self.microsoft_authority:
+            return self.microsoft_authority
+        # For single tenant (your organization only)
+        return f"https://login.microsoftonline.com/{self.microsoft_tenant_id}"
+        # For multi-tenant (any organization)
+        # return "https://login.microsoftonline.com/common"
+        # For personal Microsoft accounts
+        # return "https://login.microsoftonline.com/consumers"
+    
+    @property
+    def redirect_uri(self) -> str:
+        """Get the full redirect URI for Microsoft OAuth"""
+        return f"{self.backend_url}{self.microsoft_redirect_path}"
+    
+    @property
+    def post_login_redirect_url(self) -> str:
+        """Where to send users after successful login"""
+        return f"{self.frontend_url}/dashboard"
+    
+    @property
+    def post_logout_redirect_url(self) -> str:
+        """Where to send users after logout"""
+        return f"{self.frontend_url}/login"
+    
+    # Validators
+    @field_validator("cors_origins", mode="before")
     def parse_cors_origins(cls, v):
         """Parse CORS origins from comma-separated string or list"""
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",")]
         return v
     
-    @field_validator("environment", mode = "before")
+    @field_validator("microsoft_scopes", mode="before")
+    def parse_scopes(cls, v):
+        """Parse scopes from comma-separated string or list"""
+        if isinstance(v, str):
+            return [scope.strip() for scope in v.split(",")]
+        return v
+    
+    @field_validator("allowed_upload_extensions", mode="before")
+    def parse_upload_extensions(cls, v):
+        """Parse upload extensions from comma-separated string or list"""
+        if isinstance(v, str):
+            return [ext.strip() for ext in v.split(",")]
+        return v
+    
+    @field_validator("environment", mode="before")
     def validate_environment(cls, v):
         """Ensure environment is valid"""
         if isinstance(v, str):
@@ -152,7 +224,7 @@ class Settings(BaseSettings):
         if env == Environment.TESTING:
             return "sqlite:///./test.db"
         return v
-
+    
     @field_validator("openapi_url", "docs_url", "redoc_url")
     def disable_docs_in_production(cls, v, info):
         """Disable API documentation in production"""
@@ -160,6 +232,22 @@ class Settings(BaseSettings):
             return None
         return v
     
+    @field_validator("microsoft_tenant_id", "microsoft_client_id", "microsoft_client_secret")
+    def validate_microsoft_settings(cls, v, info):
+        """Ensure Microsoft settings are provided"""
+        if not v:
+            field_name = info.field_name
+            raise ValueError(f"{field_name} must be set for Microsoft authentication")
+        return v
+    
+    @field_validator("session_secret_key")
+    def validate_session_secret(cls, v):
+        """Ensure session secret is secure"""
+        if len(v) < 32:
+            raise ValueError("Session secret key must be at least 32 characters long")
+        return v
+    
+    # Helper Properties
     @property
     def is_development(self) -> bool:
         return self.environment == Environment.DEVELOPMENT
@@ -175,13 +263,23 @@ class Settings(BaseSettings):
     @property
     def database_settings(self) -> Dict[str, Any]:
         """Get database configuration for SQLAlchemy"""
-        return {
-            "pool_size": self.database_pool_size,
-            "max_overflow": self.database_max_overflow,
-            "echo": self.database_echo,
+        settings = {
             "pool_pre_ping": True,
             "pool_recycle": 3600,
         }
+        
+        # Only add pool settings for non-SQLite databases
+        if not self.database_url.startswith("sqlite"):
+            settings.update({
+                "pool_size": self.database_pool_size,
+                "max_overflow": self.database_max_overflow,
+            })
+        
+        # Add echo in development
+        if self.is_development:
+            settings["echo"] = self.database_echo
+            
+        return settings
     
     @property
     def redis_settings(self) -> Dict[str, Any]:
@@ -230,8 +328,15 @@ class ProductionSettings(Settings):
     @field_validator("secret_key")
     def validate_secret_key(cls, v):
         """Ensure secret key is set in production"""
-        if not v or v == "changeme":
-            raise ValueError("Secret key must be set in production")
+        if not v or len(v) < 32:
+            raise ValueError("Secret key must be at least 32 characters in production")
+        return v
+    
+    @field_validator("session_secret_key")
+    def validate_session_key_production(cls, v):
+        """Ensure session key is secure in production"""
+        if not v or len(v) < 64:
+            raise ValueError("Session secret key must be at least 64 characters in production")
         return v
 
 
@@ -242,6 +347,11 @@ class TestingSettings(Settings):
     environment: Environment = Environment.TESTING
     database_url: str = "sqlite:///./test.db"
     redis_db: int = 15  # Use a different Redis DB for testing
+    
+    # Use test Microsoft app registration
+    microsoft_tenant_id: str = Field(default="test-tenant", env="TEST_MICROSOFT_TENANT_ID")
+    microsoft_client_id: str = Field(default="test-client", env="TEST_MICROSOFT_CLIENT_ID")
+    microsoft_client_secret: str = Field(default="test-secret", env="TEST_MICROSOFT_CLIENT_SECRET")
 
 
 @lru_cache()
@@ -273,18 +383,36 @@ def validate_config():
     
     # Check required settings in production
     if settings.is_production:
-        if not settings.secret_key or settings.secret_key == "changeme":
-            errors.append("SECRET_KEY must be set in production")
+        if not settings.secret_key or len(settings.secret_key) < 32:
+            errors.append("SECRET_KEY must be at least 32 characters in production")
+        
+        if not settings.session_secret_key or len(settings.session_secret_key) < 64:
+            errors.append("SESSION_SECRET_KEY must be at least 64 characters in production")
         
         if settings.debug:
             errors.append("DEBUG must be False in production")
         
         if "localhost" in settings.cors_origins or "*" in settings.cors_origins:
             errors.append("CORS origins should be restricted in production")
+        
+        if settings.backend_url.startswith("http://"):
+            errors.append("Backend URL should use HTTPS in production")
     
     # Check database connection
     if not settings.database_url:
         errors.append("DATABASE_URL must be set")
+    
+    # Check Microsoft configuration
+    if not all([settings.microsoft_tenant_id, settings.microsoft_client_id, settings.microsoft_client_secret]):
+        errors.append("All Microsoft OAuth settings must be configured")
+    
+    # Check redirect URI
+    if not settings.backend_url:
+        errors.append("BACKEND_URL must be set for OAuth redirect")
+    
+    # Check session configuration
+    if settings.session_lifetime_hours > 168:  # 7 days
+        errors.append("Session lifetime should not exceed 7 days")
     
     # Check email configuration if enabled
     if settings.smtp_host and not all([settings.smtp_user, settings.smtp_password]):
@@ -292,3 +420,63 @@ def validate_config():
     
     if errors:
         raise ValueError(f"Configuration errors: {'; '.join(errors)}")
+
+
+# Example .env file content
+"""
+# Application
+APP_NAME=Internal_Edge_tool
+APP_VERSION=1.0.0
+ENVIRONMENT=development
+DEBUG=true
+
+# Server
+HOST=0.0.0.0
+PORT=8000
+WORKERS=1
+RELOAD=true
+
+# URLs
+FRONTEND_URL=http://localhost:3000
+BACKEND_URL=http://localhost:8000
+
+# Microsoft Authentication (REQUIRED)
+MICROSOFT_TENANT_ID=your-tenant-id-here
+MICROSOFT_CLIENT_ID=your-client-id-here
+MICROSOFT_CLIENT_SECRET=your-client-secret-here
+MICROSOFT_SCOPES=User.Read,profile,email,openid
+
+# Session Configuration
+SESSION_SECRET_KEY=generate-a-secure-random-key-here
+SESSION_LIFETIME_HOURS=24
+MAX_SESSIONS_PER_USER=5
+
+# Database
+DATABASE_URL=sqlite:///./app.db
+DATABASE_ECHO=true
+
+# CORS
+CORS_ORIGINS=http://localhost:3000,http://localhost:8080
+
+# Redis (optional)
+# REDIS_URL=redis://localhost:6379
+# REDIS_DB=0
+
+# Email (optional)
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@gmail.com
+# SMTP_PASSWORD=your-app-password
+
+# Logging
+LOG_LEVEL=INFO
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_PER_MINUTE=60
+
+# File Upload
+MAX_UPLOAD_SIZE=10485760
+ALLOWED_UPLOAD_EXTENSIONS=.jpg,.jpeg,.png,.pdf,.doc,.docx
+UPLOAD_DIRECTORY=./uploads
+"""

@@ -11,7 +11,6 @@ response = requests.post("http://localhost:8000/items", json=item)
 
 print(response.json())
 
-
 # Base URL
 base_url = "http://localhost:8000"
 

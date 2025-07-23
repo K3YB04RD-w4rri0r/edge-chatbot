@@ -5,6 +5,8 @@ from datetime import datetime
 import uvicorn
 
 
+from backend.database import engine, Base
+
 from config import settings, validate_config
 
 # routes 
@@ -14,7 +16,12 @@ from backend.routes.auth_routes import router as auth_router
 # Validate configuration on startup
 validate_config()
 
-# Create FastAPI instance with settings
+# Create tables before creating the app
+print("Creating database tables...")
+Base.metadata.create_all(bind=engine)
+print("Database tables created!")
+
+# Create FastAPI instance
 app = FastAPI(
     title=settings.app_name,
     description="Internal tool Edge",

@@ -3,6 +3,7 @@ items_db = {}
 current_id = 1
 
 
+# backend/database.py - Simple fix
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -35,6 +36,19 @@ def get_db():
 # Create tables
 def init_db():
     """Initialize database tables"""
-    # Import all models here to ensure they're registered
-    from . import auth_models  # noqa
+    # IMPORTANT: Import models here to register them with Base
+    # This import must happen AFTER Base is defined
+    import backend.models.auth_models  # This registers the User model
+    
+    # Now create all tables
     Base.metadata.create_all(bind=engine)
+    
+    # Verify creation
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    print(f"Database initialized. Tables: {tables}")
+    
+    if 'users' not in tables:
+        raise RuntimeError("Failed to create users table! Check model imports.")
+

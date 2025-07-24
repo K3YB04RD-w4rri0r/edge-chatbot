@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends, status, Response
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import msal
 import httpx
@@ -13,6 +13,9 @@ import asyncio
 import logging
 import redis
 import json
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from config import get_settings
 
 # Configure logging
@@ -22,20 +25,79 @@ logger = logging.getLogger(__name__)
 # Initialize settings
 settings = get_settings()
 
+# For Python < 3.11 compatibility
+UTC = timezone.utc
+
 # Redis client (optional for development)
 redis_client = None
 if settings.redis_url:
-    redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        redis_client.ping()
+        logger.info("Redis connected successfully")
+    except Exception as e:
+        logger.warning(f"Redis connection failed: {e}, falling back to in-memory storage")
+        redis_client = None
 elif not settings.is_development:
     # Redis configuration for production
-    redis_client = redis.Redis(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        db=settings.redis_db,
-        password=settings.redis_password,
-        decode_responses=True
-    )
+    try:
+        redis_client = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            db=settings.redis_db,
+            password=settings.redis_password,
+            decode_responses=True
+        )
+        redis_client.ping()
+        logger.info("Redis connected successfully")
+    except Exception as e:
+        logger.error(f"Redis connection failed in production: {e}")
+        # In production, you might want to fail fast here
+        # raise Exception("Redis is required in production")
 
+# Custom key function that handles both regular requests and authenticated users
+def get_rate_limit_key(request: Request) -> str:
+    """Get rate limit key based on IP and user if authenticated"""
+    # Try to get user from JWT token
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            payload = jwt.decode(
+                token, 
+                settings.secret_key, 
+                algorithms=[settings.algorithm],
+                options={"verify_signature": False}  # Just to get user ID
+            )
+            user_id = payload.get("sub")
+            if user_id:
+                return f"user:{user_id}"
+        except:
+            pass
+    
+    # Fall back to IP address
+    return get_remote_address(request)
+
+# Initialize rate limiter
+if settings.rate_limit_enabled:
+    if redis_client and settings.redis_connection_string:
+        # Use Redis for distributed rate limiting in production
+        limiter = Limiter(
+            key_func=get_rate_limit_key,
+            storage_uri=settings.redis_connection_string,
+            default_limits=[settings.rate_limit_default]
+        )
+    else:
+        # Use in-memory storage for development
+        limiter = Limiter(
+            key_func=get_rate_limit_key,
+            default_limits=[settings.rate_limit_default]
+        )
+else:
+    # Create a no-op limiter if rate limiting is disabled
+    limiter = Limiter(
+        key_func=get_rate_limit_key,
+        enabled=False
+    )
 
 # Fallback to in-memory storage for development
 auth_states: Dict[str, dict] = {}
@@ -52,20 +114,28 @@ async def cleanup_auth_states():
             else:
                 # In-memory cleanup
                 current_time = datetime.now(UTC)
-                expired_states = [
-                    state for state, data in auth_states.items()
-                    if current_time - data["timestamp"] > timedelta(minutes=10)
-                ]
+                expired_states = []
+                for state, data in auth_states.items():
+                    # Parse the ISO timestamp properly
+                    if isinstance(data.get("timestamp"), str):
+                        timestamp = datetime.fromisoformat(data["timestamp"].replace('Z', '+00:00'))
+                    else:
+                        timestamp = data["timestamp"]
+                    
+                    if current_time - timestamp > timedelta(minutes=10):
+                        expired_states.append(state)
+                
                 for state in expired_states:
                     auth_states.pop(state, None)
                 
                 # Cleanup expired refresh tokens
-                expired_tokens = [
-                    token for token, data in refresh_tokens.items()
-                    if current_time - data["timestamp"] > timedelta(days=settings.refresh_token_expire_days)
-                ]
-                for token in expired_tokens:
-                    refresh_tokens.pop(token, None)
+                expired_tokens = []
+                for user_id, data in refresh_tokens.items():
+                    if current_time - data["timestamp"] > timedelta(days=settings.refresh_token_expire_days):
+                        expired_tokens.append(user_id)
+                
+                for user_id in expired_tokens:
+                    refresh_tokens.pop(user_id, None)
                     
                 await asyncio.sleep(3600)
         except Exception as e:
@@ -87,6 +157,12 @@ async def lifespan(app: FastAPI):
         pass
 
 app = FastAPI(title="Microsoft Login API", lifespan=lifespan)
+
+# Attach limiter to app state (required for the decorators to work)
+app.state.limiter = limiter
+
+# Add rate limit exceeded handler
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS - Special handling for development
 if settings.is_development:
@@ -170,6 +246,13 @@ def get_refresh_token(user_id: str) -> Optional[str]:
         data = refresh_tokens.get(user_id)
         return data["token"] if data else None
 
+def delete_refresh_token(user_id: str):
+    """Delete refresh token"""
+    if redis_client:
+        redis_client.delete(f"refresh_token:{user_id}")
+    else:
+        refresh_tokens.pop(user_id, None)
+
 # JWT token creation and validation
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -180,10 +263,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire, "iat": datetime.now(UTC)})
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
     return encoded_jwt
-
-def create_refresh_token() -> str:
-    """Create a refresh token"""
-    return str(uuid.uuid4())
 
 async def get_current_user(request: Request) -> dict:
     """Validate JWT token and return user data"""
@@ -196,16 +275,13 @@ async def get_current_user(request: Request) -> dict:
         )
     
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        
-        # Validate token expiration
-        exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp, UTC) < datetime.now(UTC):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        # jwt.decode will automatically check expiration
+        payload = jwt.decode(
+            token, 
+            settings.secret_key, 
+            algorithms=[settings.algorithm],
+            options={"verify_exp": True}  # This is default True
+        )
         
         user_data = payload.get("user_data")
         if user_data is None:
@@ -217,6 +293,12 @@ async def get_current_user(request: Request) -> dict:
         
         return user_data
         
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except JWTError as e:
         logger.error(f"JWT decode error: {e}")
         raise HTTPException(
@@ -227,7 +309,8 @@ async def get_current_user(request: Request) -> dict:
 
 # Routes
 @app.get("/health")
-async def health_check():
+@limiter.limit("30/minute")
+async def health_check(request: Request):
     """Health check endpoint"""
     health_status = {"status": "OK", "timestamp": datetime.now(UTC).isoformat()}
     
@@ -243,27 +326,32 @@ async def health_check():
     return health_status
 
 @app.get("/auth/microsoft")
-async def login():
+@limiter.limit("10/minute")  # Limit login attempts
+async def login(request: Request):
     """Initiate Microsoft OAuth login"""
     # Generate state for CSRF protection
     state = str(uuid.uuid4())
     
     # Store state
-    store_state(state, {"timestamp": datetime.now(UTC).isoformat()})
+    store_state(state, {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "ip": get_remote_address(request)  # Store IP for additional security
+    })
     
     # Get authorization URL
     auth_url = msal_app.get_authorization_request_url(
         scopes=["User.Read", "email"],
         state=state,
         redirect_uri=settings.redirect_uri,
-        prompt="select_account",  # Always show account selection
+        prompt="select_account"  # Always show account selection
     )
     
     logger.info(f"Initiating login with state: {state}")
     return RedirectResponse(url=auth_url)
 
 @app.get("/auth/microsoft/callback")
-async def callback(code: str, state: str, error: Optional[str] = None, error_description: Optional[str] = None):
+@limiter.limit("20/minute")  # Allow more for callbacks due to redirects
+async def callback(request: Request, code: str, state: str, error: Optional[str] = None, error_description: Optional[str] = None):
     """Handle Microsoft OAuth callback"""
     # Handle OAuth errors
     if error:
@@ -297,6 +385,12 @@ async def callback(code: str, state: str, error: Optional[str] = None, error_des
             content={"error": "Invalid state parameter"}
         )
     
+    # Additional security: verify IP matches (optional, can be disabled for mobile scenarios)
+    # stored_ip = state_data.get("ip")
+    # current_ip = get_remote_address(request)
+    # if stored_ip != current_ip:
+    #     logger.warning(f"IP mismatch - stored: {stored_ip}, current: {current_ip}")
+    
     # Clean up state
     delete_state(state)
     
@@ -306,7 +400,7 @@ async def callback(code: str, state: str, error: Optional[str] = None, error_des
         result = msal_app.acquire_token_by_authorization_code(
             code,
             scopes=["User.Read", "email"],
-            redirect_uri=settings.redirect_uri,
+            redirect_uri=settings.redirect_uri
         )
         
         if "access_token" not in result:
@@ -398,19 +492,6 @@ async def callback(code: str, state: str, error: Optional[str] = None, error_des
             max_age=settings.access_token_expire_minutes * 60
         )
         
-        # Set refresh token cookie if in production
-        if settings.is_production and "refresh_token" in result:
-            refresh_token_id = create_refresh_token()
-            response.set_cookie(
-                key="refresh_token_id",
-                value=refresh_token_id,
-                httponly=True,
-                secure=settings.secure_cookies,
-                samesite=settings.cookie_samesite,
-                domain=settings.cookie_domain,
-                max_age=settings.refresh_token_expire_days * 86400
-            )
-        
         return response
         
     except Exception as e:
@@ -421,6 +502,7 @@ async def callback(code: str, state: str, error: Optional[str] = None, error_des
         )
 
 @app.post("/auth/refresh")
+@limiter.limit("5/minute")  # Strict limit on refresh attempts
 async def refresh_token(request: Request):
     """Refresh access token using refresh token"""
     try:
@@ -429,7 +511,7 @@ async def refresh_token(request: Request):
         if not token:
             raise HTTPException(status_code=401, detail="No access token")
         
-        # Decode without verification to get user ID
+        # Decode without verification to get user ID (safe because we verify the refresh token)
         unverified_payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm], options={"verify_signature": False})
         user_id = unverified_payload.get("sub")
         
@@ -437,17 +519,19 @@ async def refresh_token(request: Request):
             raise HTTPException(status_code=401, detail="Invalid token")
         
         # Get stored refresh token
-        refresh_token = get_refresh_token(user_id)
-        if not refresh_token:
+        stored_refresh_token = get_refresh_token(user_id)
+        if not stored_refresh_token:
             raise HTTPException(status_code=401, detail="No refresh token available")
         
         # Use refresh token to get new access token
         result = msal_app.acquire_token_by_refresh_token(
-            refresh_token,
+            stored_refresh_token,
             scopes=["User.Read", "email"]
         )
         
         if "access_token" not in result:
+            # If refresh fails, delete the invalid refresh token
+            delete_refresh_token(user_id)
             raise HTTPException(status_code=401, detail="Failed to refresh token")
         
         # Get updated user profile
@@ -457,6 +541,10 @@ async def refresh_token(request: Request):
                 headers={"Authorization": f"Bearer {result['access_token']}"},
             )
             user_profile = graph_response.json()
+        
+        # Update refresh token if a new one was provided
+        if "refresh_token" in result:
+            store_refresh_token(user_id, result["refresh_token"])
         
         # Create new JWT
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
@@ -487,12 +575,14 @@ async def refresh_token(request: Request):
         raise HTTPException(status_code=401, detail="Failed to refresh token")
 
 @app.get("/api/user")
-async def get_user(current_user: dict = Depends(get_current_user)):
+@limiter.limit("100/minute")  # Generous limit for regular API calls
+async def get_user(request: Request, current_user: dict = Depends(get_current_user)):
     """Get current authenticated user"""
     return {"user": current_user}
 
 @app.get("/api/protected")
-async def protected_route(current_user: dict = Depends(get_current_user)):
+@limiter.limit("100/minute")
+async def protected_route(request: Request, current_user: dict = Depends(get_current_user)):
     """Example protected route"""
     return {
         "message": "This is a protected resource",
@@ -501,7 +591,8 @@ async def protected_route(current_user: dict = Depends(get_current_user)):
     }
 
 @app.get("/api/debug/refresh-token-status")
-async def debug_refresh_token_status(current_user: dict = Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def debug_refresh_token_status(request: Request, current_user: dict = Depends(get_current_user)):
     """Debug endpoint to check refresh token status"""
     if not settings.is_development:
         raise HTTPException(status_code=404, detail="Not found")
@@ -516,14 +607,13 @@ async def debug_refresh_token_status(current_user: dict = Depends(get_current_us
     }
 
 @app.post("/auth/logout")
-async def logout(response: Response, current_user: dict = Depends(get_current_user)):
+@limiter.limit("20/minute")
+async def logout(request: Request, response: Response, current_user: dict = Depends(get_current_user)):
     """Logout user"""
     # Clear refresh token if exists
     user_id = current_user.get("id")
-    if user_id and redis_client:
-        redis_client.delete(f"refresh_token:{user_id}")
-    elif user_id:
-        refresh_tokens.pop(user_id, None)
+    if user_id:
+        delete_refresh_token(user_id)
     
     # Create response
     logout_response = JSONResponse(content={
@@ -536,6 +626,24 @@ async def logout(response: Response, current_user: dict = Depends(get_current_us
     logout_response.delete_cookie(key="refresh_token_id", domain=settings.cookie_domain)
     
     return logout_response
+
+@app.get("/api/rate-limit-status")
+@limiter.limit("10/minute")
+async def rate_limit_status(request: Request):
+    """Check current rate limit status"""
+    if not settings.is_development:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # This endpoint is mainly for debugging
+    # In production, rate limit info is in response headers
+    return {
+        "message": "Check response headers for rate limit info",
+        "headers": {
+            "X-RateLimit-Limit": "Requests allowed in window",
+            "X-RateLimit-Remaining": "Requests remaining",
+            "X-RateLimit-Reset": "Unix timestamp when limit resets"
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

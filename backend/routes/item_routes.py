@@ -3,7 +3,8 @@ from typing import List, Optional
 from datetime import datetime
 
 from backend.schemas.item_schemas import Item, ItemCreate, ItemUpdate  
-from backend.database import items_db, current_id   
+
+items_db, current_id = {}, 1  # In-memory database for items
 
 router = APIRouter()
 

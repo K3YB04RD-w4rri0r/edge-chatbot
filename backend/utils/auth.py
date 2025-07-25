@@ -16,6 +16,7 @@ from shared_variables import (redis_client)
 from config import get_settings
 import logging
 from datetime import timezone
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 settings = get_settings()

@@ -10,3 +10,4 @@ pydantic-settings==2.0.3
 starlette==0.27.0
 redis
 slowapi
+sqlalchemy

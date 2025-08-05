@@ -154,7 +154,7 @@ except Exception as e:
     sys.exit(1)
 
 
-# MSAL configuration
+# MSAL configuration for microsoft authentication
 msal_config = {
     "client_id": settings.azure_client_id,
     "client_secret": settings.azure_client_secret,

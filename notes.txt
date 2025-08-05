@@ -1,1 +1,0 @@
-in auth.py and auth_routes.py the keys path must be changed at the same time 

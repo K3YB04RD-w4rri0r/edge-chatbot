@@ -164,7 +164,7 @@ cython_debug/
 .idea/
 
 # Visual Studio Code
-.vscode/
+.vscode
 *.code-workspace
 
 # Visual Studio

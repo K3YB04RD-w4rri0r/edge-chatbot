@@ -1,8 +1,8 @@
 from fastapi import Request, HTTPException, status
 from jose import JWTError, jwt
-from backend.utils.auth import is_token_revoked
+from jose.exceptions import ExpiredSignatureError
+from backend.services.auth import is_token_revoked
 import logging
-from slowapi.util import get_remote_address
 
 from config import get_settings
 import logging
@@ -52,7 +52,7 @@ async def get_current_user(request: Request) -> dict:
         
         return user_data
         
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expired",

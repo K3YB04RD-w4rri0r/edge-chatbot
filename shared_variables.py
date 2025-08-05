@@ -15,6 +15,17 @@ import time
 import sys
 
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+settings = get_settings()
+UTC = timezone.utc
+
+
+
+####################################################################################################
+######  Initialization of Authentification, Azure Redis and Rate Limiter  
+####################################################################################################
+
 def create_azure_redis_client(settings):
     """
     Create a Redis client optimized for Azure Cache for Redis
@@ -101,26 +112,13 @@ def get_rate_limit_key(request: Request) -> str:
     # Fall back to IP address
     return get_remote_address(request)
 
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-# Initialize settings
-settings = get_settings()
-# For Python < 3.11 compatibility
-UTC = timezone.utc
-
-
-
-# Initialize rate limiter with Redis
+# Initializes rate limiter with Redis
 limiter = Limiter(
     key_func=get_rate_limit_key,
     storage_uri=settings.redis_connection_string,
     default_limits=[settings.rate_limit_default] if settings.rate_limit_enabled else [],
     enabled=settings.rate_limit_enabled
 )
-
-
 
 # Redis client 
 try:
@@ -156,14 +154,13 @@ except Exception as e:
     sys.exit(1)
 
 
-
-# MSAL configuration
+# MSAL configuration for microsoft authentication
 msal_config = {
     "client_id": settings.azure_client_id,
     "client_secret": settings.azure_client_secret,
     "authority": f"https://login.microsoftonline.com/{settings.azure_tenant_id}",
 }
-# Creates MSAL application instance
+# Creates MSAL application instance used by auth_routes and main
 msal_app = msal.ConfidentialClientApplication(
     msal_config["client_id"],
     authority=msal_config["authority"],
@@ -171,4 +168,8 @@ msal_app = msal.ConfidentialClientApplication(
 )
 
 
+
+########################################################################################################
+######          Database Configurations and Initializations
+########################################################################################################
 

@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     
     # CORS Configuration
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://127.0.0.1:3000", "http://127.0.0.1:8080"]
-    cors_allow_methods: List[str] = ["*" ] # ["GET", "POST", "PUT", "DELETE"]
-    cors_allow_headers: List[str] = ["*" ] # ["Content-Type", "Authorization"]
+    cors_allow_methods: List[str] = ["*" ] # ["GET", "POST", "PUT", "DELETE"] # outside of development
+    cors_allow_headers: List[str] = ["*" ] # ["Content-Type", "Authorization"] # same
     
     # Redis Configuration (REQUIRED)
     redis_url: Optional[str] = None  # Full URL takes precedence
@@ -38,8 +38,24 @@ class Settings(BaseSettings):
     redis_ssl: bool = False
     redis_ssl_cert_reqs: str = "required"  # required, optional, none
     
+    # Database Configuration (Azure SQL or PostgreSQL)
+    db_type: str = "postgresql"  # "postgresql" or "mssql"
+    db_host: str  # e.g., "myserver.database.windows.net" or "myserver.postgres.database.azure.com"
+    db_port: int = 3306  # 5432 for PostgreSQL, 3306 1433 for SQL Server
+    db_name: str  # Database name
+    db_user: str  # Username (for Azure: username@servername)
+    db_password: str  # Password
+    db_ssl_mode: str = "require"  # PostgreSQL SSL mode: disable, allow, prefer, require, verify-ca, verify-full
+    
+    # Optional: Full database URL (overrides individual settings)
+    database_url: Optional[str] = None
+    
+    openai_key: str
+    google_key: str
+
     # Security Configuration
     secure_cookies: bool = False  # Set to True in production
+    persist_attachment_preferences: bool = True
     cookie_domain: Optional[str] = None  # Set for production (e.g., ".yourdomain.com")
     cookie_samesite: str = "lax"  # lax, strict, or none
     
@@ -49,6 +65,8 @@ class Settings(BaseSettings):
     rate_limit_auth: str = "10 per minute"     # For auth endpoints
     rate_limit_refresh: str = "5 per minute"   # For token refresh
     rate_limit_api: str = "100 per minute"     # For regular API endpoints
+
+    admins : List[str] = False
     
     # Per-endpoint rate limits (can be customized)
     rate_limits: Dict[str, str] = {
@@ -56,15 +74,37 @@ class Settings(BaseSettings):
         "/auth/microsoft/callback": "20 per minute",
         "/auth/refresh": "5 per minute",
         "/auth/logout": "20 per minute",
+
         "/api/user": "100 per minute",
         "/api/protected": "100 per minute",
+
+        "/api/items": "100 per minute",
+        "/api/items/*": "100 per minute",
+        "/api/user/profile": "100 per minute",
+
+
         "/health": "30 per minute",
     }
     
     # Logging Configuration
     log_level: str = "INFO"
+
+    # for attachments
+    storage_backend: str
+    azure_storage_connection_string: str
+    azure_container_name: str
+    max_file_size: int
+    max_attachments_per_conversation: int
+    upload_url_expiry: int
     
-    @field_validator('cors_origins', 'cors_allow_methods', 'cors_allow_headers', mode="before")
+    allowed_content_types: List[str]
+    enable_virus_scanning: str
+    enable_deduplication: str
+    generate_thumbnails: str
+
+
+
+    @field_validator('cors_origins', 'cors_allow_methods', 'cors_allow_headers', "allowed_content_types", mode="before")
     def parse_list(cls, v):
         if isinstance(v, str):
             # Handle JSON-like strings

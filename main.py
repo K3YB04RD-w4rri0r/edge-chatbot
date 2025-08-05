@@ -8,16 +8,19 @@ import redis
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from shared_variables import (
-    redis_client,
-    limiter,)
+from shared_variables import redis_client,limiter
+from backend.databases.conversations_database import test_db_connection
+from config import get_settings
+
+
 
 from backend.routes.auth_routes import router as auth_router 
-from backend.routes.item_routes import router as items_router
+from backend.routes.conversation_routes import router as conversation_router
+from backend.routes.attachment_routes import router as attachment_router
+from backend.routes.debug_routes import router as debug_router
 
 
 
-from config import get_settings
 import logging
 from datetime import timezone
 
@@ -25,8 +28,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 UTC = timezone.utc
-
-
 
 
 
@@ -52,6 +53,18 @@ async def monitor_redis_health():
             logger.error(f"Redis health check error: {e}")
             await asyncio.sleep(30)
 
+# Background task for monitoring Database connection
+async def monitor_database_health():
+    """Monitor database connection health"""
+    while True:
+        try:
+
+            if not test_db_connection():
+                logger.error("Database connection check failed!")
+            await asyncio.sleep(60)  # Check every minute
+        except Exception as e:
+            logger.error(f"Database health check error: {e}")
+            await asyncio.sleep(60)
 
 
 
@@ -60,20 +73,32 @@ async def monitor_redis_health():
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up...")
-    monitor_task = asyncio.create_task(monitor_redis_health())
+    
+    # Test database connection on startup
+    logger.info("Testing database connection...")
+    if test_db_connection():
+        logger.info("Database connection successful")
+    else:
+        logger.warning("Database connection failed - some features may be unavailable")
+    
+    # Start monitoring tasks
+    redis_monitor_task = asyncio.create_task(monitor_redis_health())
+    db_monitor_task = asyncio.create_task(monitor_database_health())
+    
     yield
+    
     # Shutdown
     logger.info("Shutting down...")
-    monitor_task.cancel()
+    redis_monitor_task.cancel()
+    db_monitor_task.cancel()
     try:
-        await monitor_task
+        await redis_monitor_task
+        await db_monitor_task
     except asyncio.CancelledError:
         pass
 
 
-
-
-
+# Probably need to add recurrent jobs to cleanup the db etc 
 
 
 #################################################
@@ -83,11 +108,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Microsoft Login API", lifespan=lifespan)
 # Plus the Routes
 app.include_router(auth_router)
-app.include_router(items_router)
+app.include_router(attachment_router)
+app.include_router(conversation_router)
+
+if settings.is_development:
+    app.include_router(debug_router)
+
 
 # Attach limiter to app state (required for the decorators to work)
 app.state.limiter = limiter
-# Add rate limit exceeded handler
+# Rate limit exceeded handler
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
@@ -100,7 +130,9 @@ app.add_middleware(
 )
 
 
-# Health route
+#########################################################
+####    Health Route (placed here for best practices)
+#########################################################
 @app.get("/health")
 @limiter.limit("30/minute")
 async def health_check(request: Request):
@@ -110,7 +142,7 @@ async def health_check(request: Request):
         "timestamp": datetime.now(UTC).isoformat(),
         "environment": settings.environment,
     }
-    
+    # Check Redis connection
     try:
         # Basic ping with timeout
         redis_client.ping()
@@ -145,8 +177,7 @@ async def health_check(request: Request):
         # Check if Azure Cache
         if "redis.cache.windows.net" in (settings.redis_host or settings.redis_url or ""):
             health_status["redis"]["provider"] = "Azure Cache for Redis"
-            health_status["redis"]["azure_sku"] = server_info.get("redis_mode", "Basic")
-            
+            health_status["redis"]["azure_sku"] = server_info.get("redis_mode", "Basic")      
     except redis.ConnectionError as e:
         health_status["status"] = "unhealthy"
         health_status["redis"] = {
@@ -172,6 +203,35 @@ async def health_check(request: Request):
         }
         return JSONResponse(status_code=503, content=health_status)
     
+    # Check Database
+    try:
+        db_connected = test_db_connection()
+        health_status["database"] = {
+            "connected": db_connected,
+            "type": settings.db_type,
+            "host": settings.db_host,
+            "database": settings.db_name,
+        }
+        
+        if not db_connected:
+            health_status["status"] = "degraded"
+            health_status["database"]["error"] = "Connection test failed"      
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["database"] = {
+            "connected": False,
+            "error": str(e),
+            "error_type": "unknown"
+        }
+    
+
+
+    # Appropriate status code
+    if health_status["status"] == "unhealthy":
+        return JSONResponse(status_code=503, content=health_status)
+    elif health_status["status"] == "degraded":
+        return JSONResponse(status_code=200, content=health_status)
+
     return health_status
 
 

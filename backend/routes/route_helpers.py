@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 import logging
 
 
-from backend.models.users_model import User
-from backend.models.conversations_model import Conversation
+from models.users_model import User
+from models.conversations_model import Conversation
 
-from backend.schemas.conversation_schemas import ConversationStatus
+from schemas.conversation_schemas import ConversationStatus
 
 
 logger = logging.getLogger(__name__)

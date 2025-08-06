@@ -6,24 +6,24 @@ import logging
 from typing import List
 
 from shared_variables import limiter, settings
-from backend.services.misc import get_current_user
-from backend.services.ai_querying import get_ai_response
+from services.misc import get_current_user
+from services.ai_querying import get_ai_response
 
-from backend.databases.conversations_database import get_db
-from backend.databases.file_storage_database import file_service, storage_backend
+from databases.conversations_database import get_db
+from databases.file_storage_database import file_service, storage_backend
 
-from backend.models.conversations_model import Conversation
-from backend.models.messages_model import Message, MessageRole
-from backend.models.attachments_model import Attachment, AttachmentStatus, AttachmentActivityStatus, AttachmentType
-from backend.schemas.user_schemas import UserResponse
-from backend.schemas.conversation_schemas import (
+from models.conversations_model import Conversation
+from models.messages_model import Message, MessageRole
+from models.attachments_model import Attachment, AttachmentStatus, AttachmentActivityStatus, AttachmentType
+from schemas.user_schemas import UserResponse
+from schemas.conversation_schemas import (
     ConversationCreate,
     FullConversationResponse,
     ConversationStatus
 )
-from backend.schemas.message_schemas import MessageCreate, MessageResponse, ChatResponse
+from schemas.message_schemas import MessageCreate, MessageResponse, ChatResponse
 
-from backend.routes.route_helpers import get_or_create_user, verify_conversation_ownership
+from routes.route_helpers import get_or_create_user, verify_conversation_ownership
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -264,7 +264,7 @@ async def create_message(
         recent_messages = list(reversed(recent_messages))
         
         # Generate AI response with direct file uploads
-        from backend.services.ai_querying import get_ai_response
+        from services.ai_querying import get_ai_response
         
         ai_response_content = await get_ai_response(
             conversation=conversation,

@@ -10,22 +10,22 @@ import io
 
 
 from shared_variables import limiter, settings
-from backend.services.misc import get_current_user
+from services.misc import get_current_user
 
-from backend.databases.conversations_database import get_db
-from backend.databases.file_storage_database import storage_backend, file_service, AzureFileStorage
+from databases.conversations_database import get_db
+from databases.file_storage_database import storage_backend, file_service, AzureFileStorage
 
-from backend.models.conversations_model import Conversation
-from backend.models.attachments_model import Attachment, AttachmentStatus, AttachmentActivityStatus, AttachmentType
+from models.conversations_model import Conversation
+from models.attachments_model import Attachment, AttachmentStatus, AttachmentActivityStatus, AttachmentType
 
-from backend.schemas.attachment_schemas import (
+from schemas.attachment_schemas import (
     AttachmentUploadRequest,
     AttachmentUploadResponse,
     AttachmentResponse,
     BatchAttachmentActivityUpdate
 )
 
-from backend.routes.route_helpers import get_or_create_user, verify_conversation_ownership
+from routes.route_helpers import get_or_create_user, verify_conversation_ownership
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc

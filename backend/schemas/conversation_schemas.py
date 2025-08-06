@@ -3,10 +3,10 @@ from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
-from backend.models.conversations_model import ModelChoice, ModelInstructions
+from models.conversations_model import ModelChoice, ModelInstructions
 
-from backend.schemas.attachment_schemas import AttachmentResponse
-from backend.schemas.message_schemas import MessageCreate, MessageResponse
+from schemas.attachment_schemas import AttachmentResponse
+from schemas.message_schemas import MessageCreate, MessageResponse
 
 
 

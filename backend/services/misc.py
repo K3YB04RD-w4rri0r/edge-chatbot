@@ -1,7 +1,7 @@
 from fastapi import Request, HTTPException, status
 from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
-from backend.services.auth import is_token_revoked
+from services.auth import is_token_revoked
 import logging
 
 from config import get_settings

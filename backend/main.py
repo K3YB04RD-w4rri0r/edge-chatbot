@@ -9,15 +9,15 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from shared_variables import redis_client,limiter
-from backend.databases.conversations_database import test_db_connection
+from databases.conversations_database import test_db_connection
 from config import get_settings
 
 
 
-from backend.routes.auth_routes import router as auth_router 
-from backend.routes.conversation_routes import router as conversation_router
-from backend.routes.attachment_routes import router as attachment_router
-from backend.routes.debug_routes import router as debug_router
+from routes.auth_routes import router as auth_router 
+from routes.conversation_routes import router as conversation_router
+from routes.attachment_routes import router as attachment_router
+from routes.debug_routes import router as debug_router
 
 
 
@@ -28,9 +28,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 UTC = timezone.utc
-
-
-
 
 
 
@@ -131,7 +128,7 @@ app.add_middleware(
 
 
 #########################################################
-####    Health Route (placed here for best practices)
+####    Health Route
 #########################################################
 @app.get("/health")
 @limiter.limit("30/minute")

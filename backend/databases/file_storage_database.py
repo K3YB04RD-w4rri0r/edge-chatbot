@@ -9,7 +9,7 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 from azure.core.exceptions import ResourceNotFoundError
 import io
 
-from backend.models.attachments_model import AttachmentType
+from models.attachments_model import AttachmentType
 from shared_variables import settings
 
 

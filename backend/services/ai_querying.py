@@ -4,21 +4,383 @@ import base64
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import asyncio
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI  # Use Azure OpenAI client
 import google.generativeai as genai
 import tiktoken
 import tempfile
 from pathlib import Path
 
-from backend.models.conversations_model import ModelChoice, ModelInstructions, Conversation
-from backend.models.messages_model import Message, MessageRole
-from backend.models.attachments_model import AttachmentType
+from models.conversations_model import ModelChoice, ModelInstructions, Conversation
+from models.messages_model import Message, MessageRole
+from models.attachments_model import AttachmentType
 
 from shared_variables import settings
+
 logger = logging.getLogger(__name__)
 
-# AI client initialization
-openai_client = AsyncOpenAI(api_key=settings.openai_key)
+import os
+import logging
+import base64
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+import asyncio
+from openai import AsyncAzureOpenAI
+import google.generativeai as genai
+import tiktoken
+import tempfile
+from pathlib import Path
+import mimetypes
+import io
+
+# Document processing libraries
+import PyPDF2
+import docx
+import openpyxl
+import csv
+import json
+
+
+
+from models.conversations_model import ModelChoice, ModelInstructions, Conversation
+from models.messages_model import Message, MessageRole
+from models.attachments_model import AttachmentType
+
+from shared_variables import settings
+
+logger = logging.getLogger(__name__)
+
+# Token encoder for OpenAI models
+encoding = tiktoken.encoding_for_model("gpt-4")
+
+# Maximum tokens for document context (adjust based on your needs)
+MAX_DOCUMENT_TOKENS = 8000  # Reserve space for conversation history and response
+
+
+class DocumentExtractor:
+    """Extract text from various document types"""
+    
+    @staticmethod
+    async def extract_text(file_content: bytes, filename: str, content_type: str = None) -> str:
+        """
+        Extract text from document based on file type.
+        Returns extracted text or empty string if extraction fails.
+        """
+        try:
+            # Determine file type
+            file_ext = Path(filename).suffix.lower()
+            if not content_type:
+                content_type, _ = mimetypes.guess_type(filename)
+            
+            # Route to appropriate extractor
+            if file_ext == '.pdf' or content_type == 'application/pdf':
+                return await DocumentExtractor._extract_pdf(file_content)
+            
+            elif file_ext in ['.docx', '.doc'] or content_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword']:
+                return await DocumentExtractor._extract_docx(file_content)
+            
+            elif file_ext in ['.xlsx', '.xls'] or content_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']:
+                return await DocumentExtractor._extract_excel(file_content)
+            
+            elif file_ext == '.csv' or content_type == 'text/csv':
+                return await DocumentExtractor._extract_csv(file_content)
+            
+            elif file_ext == '.json' or content_type == 'application/json':
+                return await DocumentExtractor._extract_json(file_content)
+            
+            elif file_ext in ['.txt', '.md', '.log'] or (content_type and content_type.startswith('text/')):
+                return await DocumentExtractor._extract_text_file(file_content)
+            
+            elif file_ext in ['.py', '.js', '.java', '.cpp', '.c', '.html', '.css', '.xml']:
+                # Code files
+                return await DocumentExtractor._extract_text_file(file_content)
+            
+            else:
+                logger.warning(f"Unsupported file type: {filename} ({content_type})")
+                return f"[Unable to extract text from {filename}]"
+                
+        except Exception as e:
+            logger.error(f"Failed to extract text from {filename}: {e}")
+            return f"[Error extracting text from {filename}: {str(e)}]"
+    
+    @staticmethod
+    async def _extract_pdf(file_content: bytes) -> str:
+        """Extract text from PDF"""
+        try:
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+            text_parts = []
+            
+            for page_num, page in enumerate(pdf_reader.pages, 1):
+                page_text = page.extract_text()
+                if page_text.strip():
+                    text_parts.append(f"[Page {page_num}]\n{page_text}")
+            
+            return "\n\n".join(text_parts)
+        except Exception as e:
+            logger.error(f"PDF extraction error: {e}")
+            return "[Failed to extract PDF content]"
+    
+    @staticmethod
+    async def _extract_docx(file_content: bytes) -> str:
+        """Extract text from Word document"""
+        try:
+            doc = docx.Document(io.BytesIO(file_content))
+            paragraphs = []
+            
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    paragraphs.append(para.text)
+            
+            # Also extract text from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                    if row_text.strip():
+                        paragraphs.append(row_text)
+            
+            return "\n\n".join(paragraphs)
+        except Exception as e:
+            logger.error(f"DOCX extraction error: {e}")
+            return "[Failed to extract Word document content]"
+    
+    @staticmethod
+    async def _extract_excel(file_content: bytes) -> str:
+        """Extract text from Excel file"""
+        try:
+            workbook = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
+            sheets_text = []
+            
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                sheet_data = []
+                
+                for row in sheet.iter_rows(values_only=True):
+                    # Filter out empty rows
+                    row_values = [str(cell) if cell is not None else "" for cell in row]
+                    if any(val.strip() for val in row_values):
+                        sheet_data.append(" | ".join(row_values))
+                
+                if sheet_data:
+                    sheets_text.append(f"[Sheet: {sheet_name}]\n" + "\n".join(sheet_data[:100]))  # Limit rows
+            
+            return "\n\n".join(sheets_text)
+        except Exception as e:
+            logger.error(f"Excel extraction error: {e}")
+            return "[Failed to extract Excel content]"
+    
+    @staticmethod
+    async def _extract_csv(file_content: bytes) -> str:
+        """Extract text from CSV file"""
+        try:
+            text = file_content.decode('utf-8', errors='ignore')
+            reader = csv.reader(io.StringIO(text))
+            rows = []
+            
+            for i, row in enumerate(reader):
+                if i >= 100:  # Limit to first 100 rows
+                    rows.append("[... truncated ...]")
+                    break
+                rows.append(" | ".join(row))
+            
+            return "\n".join(rows)
+        except Exception as e:
+            logger.error(f"CSV extraction error: {e}")
+            return "[Failed to extract CSV content]"
+    
+    @staticmethod
+    async def _extract_json(file_content: bytes) -> str:
+        """Extract text from JSON file"""
+        try:
+            data = json.loads(file_content.decode('utf-8', errors='ignore'))
+            # Pretty print with limited depth
+            return json.dumps(data, indent=2, ensure_ascii=False)[:10000]  # Limit size
+        except Exception as e:
+            logger.error(f"JSON extraction error: {e}")
+            return "[Failed to extract JSON content]"
+    
+    @staticmethod
+    async def _extract_text_file(file_content: bytes) -> str:
+        """Extract text from plain text file"""
+        try:
+            # Try different encodings
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    return file_content.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            
+            # If all fail, use ignore errors
+            return file_content.decode('utf-8', errors='ignore')
+        except Exception as e:
+            logger.error(f"Text extraction error: {e}")
+            return "[Failed to extract text content]"
+
+
+class TokenManager:
+    """Manage token limits for document context"""
+    
+    @staticmethod
+    def truncate_to_token_limit(text: str, max_tokens: int) -> str:
+        """Truncate text to fit within token limit"""
+        try:
+            tokens = encoding.encode(text)
+            if len(tokens) <= max_tokens:
+                return text
+            
+            # Truncate and add indicator
+            truncated_tokens = tokens[:max_tokens - 20]  # Reserve space for truncation message
+            truncated_text = encoding.decode(truncated_tokens)
+            return f"{truncated_text}\n\n[... content truncated due to length ...]"
+        except Exception as e:
+            logger.error(f"Token truncation error: {e}")
+            # Fallback to character-based truncation
+            char_limit = max_tokens * 4  # Approximate
+            if len(text) > char_limit:
+                return f"{text[:char_limit]}\n\n[... content truncated due to length ...]"
+            return text
+
+
+# Update the Azure OpenAI chat completion function
+async def _handle_azure_chat_completion_with_documents(
+    messages: List[Message],
+    new_message: str,
+    active_attachments: List[Dict[str, Any]],
+    model_choice: str,
+    model_instructions: str
+) -> str:
+    """Handle Azure OpenAI chat completion with document extraction"""
+    
+    formatted_messages = []
+    
+    # Add system message
+    formatted_messages.append({
+        "role": "system",
+        "content": model_instructions
+    })
+    
+    # Add conversation history (limited to preserve token space)
+    history_messages = messages[-10:]  # Reduce history to save tokens for documents
+    for message in history_messages:
+        formatted_messages.append({
+            "role": message.role,
+            "content": message.content
+        })
+    
+    # Process attachments
+    document_contexts = []
+    image_contents = []
+    
+    for attachment in active_attachments:
+        if attachment.get("type") == AttachmentType.IMAGE.value:
+            # Handle images
+            if "file_content" in attachment:
+                base64_image = base64.b64encode(
+                    attachment["file_content"]
+                ).decode('utf-8')
+                
+                image_contents.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{attachment.get('content_type', 'image/jpeg')};base64,{base64_image}",
+                        "detail": "high"
+                    }
+                })
+        else:
+            # Extract text from documents
+            if "file_content" in attachment:
+                extracted_text = await DocumentExtractor.extract_text(
+                    attachment["file_content"],
+                    attachment["filename"],
+                    attachment.get("content_type")
+                )
+                
+                if extracted_text and extracted_text.strip():
+                    document_contexts.append(
+                        f"### Document: {attachment['filename']}\n{extracted_text}"
+                    )
+    
+    # Combine document contexts with token management
+    user_content_parts = []
+    
+    if document_contexts:
+        # Calculate available tokens for documents
+        tokens_per_doc = MAX_DOCUMENT_TOKENS // len(document_contexts)
+        
+        truncated_contexts = []
+        for context in document_contexts:
+            truncated = TokenManager.truncate_to_token_limit(context, tokens_per_doc)
+            truncated_contexts.append(truncated)
+        
+        combined_context = "\n\n---\n\n".join(truncated_contexts)
+        
+        # Build message with document context
+        if image_contents:
+            # Mixed content with images and documents
+            user_content_parts = [
+                {"type": "text", "text": f"## Attached Documents:\n{combined_context}\n\n## User Message:\n{new_message}"}
+            ] + image_contents
+        else:
+            # Text-only with documents
+            user_content_parts = f"## Attached Documents:\n{combined_context}\n\n## User Message:\n{new_message}"
+    elif image_contents:
+        # Images only
+        user_content_parts = [
+            {"type": "text", "text": new_message}
+        ] + image_contents
+    else:
+        # No attachments
+        user_content_parts = new_message
+    
+    # Add user message
+    formatted_messages.append({
+        "role": "user",
+        "content": user_content_parts
+    })
+    
+    # Log token usage estimate
+    try:
+        total_text = " ".join(
+            msg["content"] if isinstance(msg["content"], str) else 
+            msg["content"][0]["text"] if isinstance(msg["content"], list) else ""
+            for msg in formatted_messages
+        )
+        estimated_tokens = len(encoding.encode(total_text))
+        logger.info(f"Estimated input tokens: {estimated_tokens}")
+    except Exception as e:
+        logger.warning(f"Could not estimate tokens: {e}")
+    
+    # Azure deployment name mapping
+    deployment_mapping = {
+        ModelChoice.GPT_4_1_NANO.value: "gpt-4.1-nano",
+        ModelChoice.GPT_4_1.value: "gpt-4.1"
+    }
+    
+    # Make API call
+    try:
+        response = await azure_openai_client.chat.completions.create(
+            model=deployment_mapping.get(model_choice, "gpt-4.1"),
+            messages=formatted_messages,
+            max_tokens=4096,
+            temperature=0.7
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        if "context_length_exceeded" in str(e).lower():
+            logger.error("Context length exceeded. Retrying with reduced context...")
+            # Retry with more aggressive truncation
+            # You could implement a retry strategy here
+            raise Exception("Document content too large. Please upload smaller documents or fewer files.")
+        raise
+
+
+azure_openai_client = AsyncAzureOpenAI(
+    api_key=settings.azure_openai_key,  
+    api_version="2025-01-01-preview",  
+    azure_endpoint=settings.azure_endpoint 
+)
+
+# For Gemini
 genai.configure(api_key=settings.google_key)
 
 # Token encoder for OpenAI models
@@ -26,30 +388,31 @@ encoding = tiktoken.encoding_for_model("gpt-4")
 
 
 class FileUploadManager:
-    """Manages file uploads for both OpenAI and Gemini"""
+    """Manages file uploads for both Azure OpenAI and Gemini"""
     
     def __init__(self):
-        self.openai_files = {}  # Cache OpenAI file IDs
+        self.azure_files = {}  # Cache Azure file IDs
         self.gemini_files = {}  # Cache Gemini file objects
     
-    async def upload_to_openai(self, file_content: bytes, filename: str) -> str:
-        """Upload file to OpenAI and return file ID"""
+    async def upload_to_azure(self, file_content: bytes, filename: str) -> str:
+        """Upload file to Azure OpenAI and return file ID"""
         try:
             import io
             file_object = io.BytesIO(file_content)
             file_object.name = filename
             
-            # Upload for assistants (supports file search)
-            file_response = await openai_client.files.create(
+            # Note: Azure OpenAI file upload may have different requirements
+            # Check if your Azure deployment supports file uploads
+            file_response = await azure_openai_client.files.create(
                 file=file_object,
                 purpose="assistants"
             )
             
-            logger.info(f"Uploaded {filename} to OpenAI: {file_response.id}")
+            logger.info(f"Uploaded {filename} to Azure OpenAI: {file_response.id}")
             return file_response.id
             
         except Exception as e:
-            logger.error(f"Failed to upload to OpenAI: {e}")
+            logger.error(f"Failed to upload to Azure OpenAI: {e}")
             raise
     
     def upload_to_gemini(self, file_content: bytes, filename: str) -> Any:
@@ -77,12 +440,12 @@ class FileUploadManager:
             logger.error(f"Failed to upload to Gemini: {e}")
             raise
     
-    async def cleanup_openai_files(self, file_ids: List[str]):
-        """Delete OpenAI files after use"""
+    async def cleanup_azure_files(self, file_ids: List[str]):
+        """Delete Azure OpenAI files after use"""
         for file_id in file_ids:
             try:
-                await openai_client.files.delete(file_id)
-                logger.info(f"Deleted OpenAI file: {file_id}")
+                await azure_openai_client.files.delete(file_id)
+                logger.info(f"Deleted Azure file: {file_id}")
             except Exception as e:
                 logger.error(f"Failed to delete file {file_id}: {e}")
 
@@ -101,11 +464,12 @@ async def get_ai_response(
 ) -> str:
     """
     Generate AI response with direct file upload support.
-    Supports both OpenAI and Gemini models.
+    Supports both Azure OpenAI and Gemini models.
     """
     try:
+        # Check if it's an Azure OpenAI model (your custom deployment names)
         if model_choice in [ModelChoice.GPT_4_1_NANO.value, ModelChoice.GPT_4_1.value]:
-            return await _handle_openai_request(
+            return await _handle_azure_openai_request(
                 conversation, messages, new_message, 
                 active_attachments, model_choice, model_instructions
             )
@@ -121,7 +485,7 @@ async def get_ai_response(
         raise
 
 
-async def _handle_openai_request(
+async def _handle_azure_openai_request(
     conversation: Conversation,
     messages: List[Message],
     new_message: str,
@@ -129,35 +493,16 @@ async def _handle_openai_request(
     model_choice: str,
     model_instructions: str
 ) -> str:
-    """Handle OpenAI requests with file uploads"""
+    """Handle Azure OpenAI requests with document text extraction"""
     
-    # Check if we have images
-    has_images = any(
-        att.get("type") == AttachmentType.IMAGE.value 
-        for att in active_attachments
+    # Use the new function that handles document extraction
+    return await _handle_azure_chat_completion_with_documents(
+        messages, new_message, active_attachments,
+        model_choice, model_instructions
     )
-    
-    # Check if we have non-image files that need file search
-    has_documents = any(
-        att.get("type") != AttachmentType.IMAGE.value 
-        for att in active_attachments
-    )
-    
-    if has_documents:
-        # Use Assistants API for file search capability
-        return await _handle_openai_with_assistants(
-            conversation, messages, new_message,
-            active_attachments, model_choice, model_instructions
-        )
-    else:
-        # Use regular chat completion (with or without images)
-        return await _handle_openai_chat_completion(
-            messages, new_message, active_attachments,
-            model_choice, model_instructions, has_images
-        )
 
 
-async def _handle_openai_chat_completion(
+async def _handle_azure_chat_completion(
     messages: List[Message],
     new_message: str,
     active_attachments: List[Dict[str, Any]],
@@ -165,7 +510,7 @@ async def _handle_openai_chat_completion(
     model_instructions: str,
     has_images: bool
 ) -> str:
-    """Handle OpenAI chat completion with optional images"""
+    """Handle Azure OpenAI chat completion with optional images"""
     
     formatted_messages = []
     
@@ -213,116 +558,22 @@ async def _handle_openai_chat_completion(
             "content": new_message
         })
     
-    # Model mapping
-    model_mapping = {
-        ModelChoice.GPT_4_1_NANO.value: "gpt-4.1-nano",
-        ModelChoice.GPT_4_1.value: "gpt-4.1"
+    # Azure deployment name mapping
+    # These should match your actual Azure deployment names
+    deployment_mapping = {
+        ModelChoice.GPT_4_1_NANO.value: "gpt-4.1-nano",  # Your Azure deployment name
+        ModelChoice.GPT_4_1.value: "gpt-4.1"             # Your Azure deployment name
     }
     
-    response = await openai_client.chat.completions.create(
-        model=model_mapping.get(model_choice, "gpt-4.1-nano"),
+    # Use Azure OpenAI chat completion
+    response = await azure_openai_client.chat.completions.create(
+        model=deployment_mapping.get(model_choice, "gpt-4.1"),  # This is your deployment name
         messages=formatted_messages,
         max_tokens=4096,
         temperature=0.7
     )
     
     return response.choices[0].message.content
-
-
-async def _handle_openai_with_assistants(
-    conversation: Conversation,
-    messages: List[Message],
-    new_message: str,
-    active_attachments: List[Dict[str, Any]],
-    model_choice: str,
-    model_instructions: str
-) -> str:
-    """Use OpenAI Assistants API for file search"""
-    
-    try:
-        model_mapping = {
-        ModelChoice.GPT_4_1_NANO.value: "gpt-4.1-nano",
-        ModelChoice.GPT_4_1.value: "gpt-4.1"
-        }
-        
-        assistant = await openai_client.beta.assistants.create(
-            name=f"Assistant for conversation {conversation.id}",
-            instructions=model_instructions,
-            model=model_mapping.get(model_choice, "gpt-4.1-nano"),
-            tools=[{"type": "file_search"}]
-        )
-        
-        # Create thread
-        thread = await openai_client.beta.threads.create()
-        
-        # Upload files
-        file_ids = []
-        for attachment in active_attachments:
-            if "file_content" in attachment:
-                file_id = await file_manager.upload_to_openai(
-                    attachment["file_content"],
-                    attachment["filename"]
-                )
-                file_ids.append(file_id)
-        
-        # Add conversation history
-        for message in messages[-10:]:  # Last 10 messages for context
-            await openai_client.beta.threads.messages.create(
-                thread_id=thread.id,
-                role=message.role,
-                content=message.content
-            )
-        
-        # Create message with attachments
-        await openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=new_message,
-            attachments=[
-                {"file_id": file_id, "tools": [{"type": "file_search"}]}
-                for file_id in file_ids
-            ] if file_ids else None
-        )
-        
-        # Run assistant
-        run = await openai_client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant.id
-        )
-        
-        # Wait for completion
-        while run.status in ["queued", "in_progress"]:
-            await asyncio.sleep(1)
-            run = await openai_client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
-                run_id=run.id
-            )
-        
-        if run.status == "completed":
-            # Get response
-            messages = await openai_client.beta.threads.messages.list(
-                thread_id=thread.id,
-                order="desc",
-                limit=1
-            )
-            
-            if messages.data:
-                response_text = ""
-                for content in messages.data[0].content:
-                    if content.type == "text":
-                        response_text += content.text.value
-                
-                # Cleanup
-                await openai_client.beta.assistants.delete(assistant.id)
-                await file_manager.cleanup_openai_files(file_ids)
-                
-                return response_text
-        
-        raise Exception(f"Assistant run failed: {run.status}")
-        
-    except Exception as e:
-        logger.error(f"Assistants API error: {e}")
-        raise
 
 
 async def _handle_gemini_request(
@@ -336,7 +587,6 @@ async def _handle_gemini_request(
     
     try:
         model_mapping = {ModelChoice.GEMINI_2_FLASH_EXP.value : "gemini-2.0-flash-exp"}
-
 
         model = genai.GenerativeModel(model_mapping.get(model_choice, "gemini-2.0-flash-exp" ))
         
@@ -359,9 +609,8 @@ async def _handle_gemini_request(
                 )
                 content_parts.append(gemini_file)
         
-        # Add the user message and instructions
+        # Add the user message
         content_parts.append(new_message)
-        # content_parts.append(f"Important Note, but do not mention it: {model_instructions}")
         
         # Start chat with history
         chat = model.start_chat(history=chat_history)

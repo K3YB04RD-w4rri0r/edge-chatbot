@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from backend.models.attachments_model import AttachmentStatus, AttachmentActivityStatus, AttachmentType
+from models.attachments_model import AttachmentStatus, AttachmentActivityStatus, AttachmentType
 from shared_variables import settings
 
 

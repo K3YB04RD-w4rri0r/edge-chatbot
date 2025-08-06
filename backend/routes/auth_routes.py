@@ -9,8 +9,8 @@ from slowapi.util import get_remote_address
 
 
 from shared_variables import (redis_client,limiter,msal_app)
-from backend.services.auth import create_access_token, get_refresh_token, store_refresh_token, delete_refresh_token, get_state, delete_state, revoke_access_token, store_state
-from backend.services.misc import get_current_user
+from services.auth import create_access_token, get_refresh_token, store_refresh_token, delete_refresh_token, get_state, delete_state, revoke_access_token, store_state
+from services.misc import get_current_user
 
 from config import get_settings
 import logging

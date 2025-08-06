@@ -120,6 +120,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+backend/.env
 .env
 .venv
 env/
@@ -164,7 +165,7 @@ cython_debug/
 .idea/
 
 # Visual Studio Code
-.vscode/
+.vscode
 *.code-workspace
 
 # Visual Studio

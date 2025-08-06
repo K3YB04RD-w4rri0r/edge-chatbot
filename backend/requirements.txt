@@ -14,7 +14,7 @@ sqlalchemy
 psycopg2-binary
 pymysql
 psycopg2-binary
-asyncpg   # pip install psycopg2-binary asyncpg
+asyncpg
 openai
 google-generativeai
 azure-storage-blob
@@ -22,3 +22,6 @@ aiofiles
 python-magic
 pillow
 tiktoken
+PyPDF2
+python-docx 
+openpyxl

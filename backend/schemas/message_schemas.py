@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
-from backend.models.messages_model import MessageRole
+from models.messages_model import MessageRole
 
 # Message schemas
 class MessageBase(BaseModel):

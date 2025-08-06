@@ -9,8 +9,8 @@ from slowapi.util import get_remote_address
 
 
 from shared_variables import (redis_client,limiter,msal_app)
-from backend.services.auth import create_access_token, get_refresh_token, store_refresh_token, delete_refresh_token, get_state, delete_state, revoke_access_token, store_state
-from backend.services.misc import get_current_user
+from services.auth import create_access_token, get_refresh_token, store_refresh_token, delete_refresh_token, get_state, delete_state, revoke_access_token, store_state
+from services.misc import get_current_user
 
 from config import get_settings
 import logging
@@ -149,9 +149,9 @@ async def azure_redis_info(request: Request, current_user: dict = Depends(get_cu
 @router.get("/enums")
 async def get_available_enums():
     """Debug route to see available enum values"""
-    from backend.models.conversations_model import ModelChoice, ModelInstructions
-    from backend.models.attachments_model import AttachmentStatus,AttachmentType,AttachmentActivityStatus
-    from backend.models.messages_model import MessageRole
+    from models.conversations_model import ModelChoice, ModelInstructions
+    from models.attachments_model import AttachmentStatus,AttachmentType,AttachmentActivityStatus
+    from models.messages_model import MessageRole
     return {
         "model_choices": [choice.value for choice in ModelChoice],
         "model_instructions": [instruction.value for instruction in ModelInstructions],

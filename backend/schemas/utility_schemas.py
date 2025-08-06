@@ -3,10 +3,10 @@ from typing import Optional, List
 from datetime import datetime
 
 
-from backend.models.conversations_model import ModelChoice
-from backend.models.messages_model import MessageRole
+from models.conversations_model import ModelChoice
+from models.messages_model import MessageRole
 
-from backend.schemas.conversation_schemas import ConversationStatus
+from schemas.conversation_schemas import ConversationStatus
 
 
 

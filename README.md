@@ -63,7 +63,29 @@ For the full guide on how to set it up, go to:
         https://docs.google.com/document/d/1aj6Xde738f11dvOPOEINZlTvOnQyM29CmLY5AadRxbc/edit?usp=sharing 
 
 
+### Step 4: OpenAI keys
 
+1. Azure OpenAi for chatgpt
+2. Normal Google key for Gemini
+
+### Step 5: Initializations
+
+Initialize the sql databases with the init_db script
+```bash
+mv scripts/init_db.py .
+
+python3 init_db.py --recreate
+
+mv init_db.py scripts/init_db.py
+```
+
+### Step 6: Running the app
+
+```bash
+
+python3 main.py
+
+```
 
 
 <br><br>
@@ -72,6 +94,8 @@ For the full guide on how to set it up, go to:
 
 
 ## Setting up the frontend
+
+Open a new Terminal
 
 ### Step 1: Creating the React App
 

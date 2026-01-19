@@ -18,7 +18,7 @@
 
 ### Step 1: Downloading the repository
 ```bash
-git clone https://github.com/3RROR-4O4-1/edge-chatbot.git
+git clone https://github.com/K3YB04RD-w4rri0r/edge-chatbot.git
 cd edge-chatbot
 ```
 
